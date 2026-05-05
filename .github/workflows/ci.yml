@@ -28,7 +28,7 @@ jobs:
 
       # 4. Ejecutar tests
       - name: Ejecutar tests
-        run: npm test
+        run: npm test --forceExit
 
       # 5. Análisis SAST con ESLint Security
       - name: 🔒 Análisis de seguridad (ESLint)
