@@ -16,22 +16,26 @@ jobs:
       - name: Checkout código
         uses: actions/checkout@v4
 
-      # 2. Instalar Node.js
-      - name: Configurar Node.js 20
-        uses: actions/setup-node@v4
+      # 2. Configurar Python
+      - name: Configurar Python 3.11
+        uses: actions/setup-python@v5
         with:
-          node-version: '20'
+          python-version: '3.11'
+          cache: 'pip' # Cachea las dependencias para que el pipeline corra más rápido
 
       # 3. Instalar dependencias
       - name: Instalar dependencias
-        run: npm install
-
-      # 4. Ejecutar tests
-      - name: Ejecutar tests
-        run: npm test
-
-      # 5. Análisis SAST con ESLint Security
-      - name: 🔒 Análisis de seguridad (ESLint)
         run: |
-          npm install eslint-plugin-security
-          npx eslint . --ext .js
+          python -m pip upgrade pip
+          pip install -r requirements.txt
+          pip install bandit # Requerido para el análisis de seguridad
+
+      # 4. Ejecutar tests de Django
+      - name: Ejecutar tests
+        run: |
+          python manage.py test
+
+      # 5. Análisis SAST con Bandit (Seguridad en Python)
+      - name: 🔒 Análisis de seguridad (Bandit)
+        run: |
+          bandit -r . -x ./venv,./tests
