@@ -8,8 +8,13 @@ on:
 
 permissions:
   contents: read
+  security-events: write  # necesario para que CodeQL pueda subir resultados
 
 jobs:
+
+  # ──────────────────────────────────────────────────
+  # JOB 1: Tests + SAST
+  # ──────────────────────────────────────────────────
   test:
     name: Tests + Análisis de Seguridad
     runs-on: ubuntu-latest
@@ -31,24 +36,74 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install bandit
+          pip install bandit pip-audit
 
       # 4. Ejecutar tests de Django
       - name: Ejecutar tests
         run: |
           python manage.py test
 
-      # 5. Análisis SAST con Bandit
-      - name: 🔒 Análisis de seguridad (Bandit)
+      # 5. Análisis SAST con Bandit — más preciso que antes
+      #    -ll  → solo Medium y High (antes reportaba todo el ruido Low)
+      #    -ii  → solo Confidence Medium y High
+      #    -x   → excluir venv, tests y migraciones
+      - name: 🔒 Análisis SAST — Bandit
         run: |
-          bandit -r . -x ./venv,./tests
+          bandit -r . -ll -ii \
+            -x ./venv,./.venv,./tests,./*/migrations
 
-  deploy:
-    needs: test  # only runs if tests pass
+      # 6. Auditoría de dependencias — NUEVO
+      #    Verifica que requirements.txt no tenga CVEs conocidos
+      - name: 📦 Auditoría de dependencias — pip-audit
+        run: |
+          pip-audit -r requirements.txt
+
+  # ──────────────────────────────────────────────────
+  # JOB 2: CodeQL — análisis semántico profundo
+  # NUEVO — complementa a Bandit con análisis de flujo
+  # de datos entre archivos (taint analysis real)
+  # ──────────────────────────────────────────────────
+  codeql:
+    name: 🔎 CodeQL — Análisis Semántico
     runs-on: ubuntu-latest
+    # Corre en paralelo con el job test (no espera que termine)
+    # Si quieres que corra solo si los tests pasan, agrega:
+    # needs: test
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Inicializar CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+          # Ruleset de seguridad extendido (más reglas que el default)
+          queries: security-extended
+
+      - name: Autodetectar build
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Ejecutar análisis CodeQL
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:python"
+          # Los resultados aparecen en:
+          # Security → Code scanning alerts del repo
+
+  # ──────────────────────────────────────────────────
+  # JOB 3: Deploy — solo si test Y codeql pasan
+  # ──────────────────────────────────────────────────
+  deploy:
+    name: 🚀 Deploy a Render
+    needs: [test, codeql]   # antes solo dependía de test
+    runs-on: ubuntu-latest
+    # Solo deployar desde main, no desde PRs
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
     steps:
       - name: Trigger Render deploy
-        run: | 
+        run: |
           curl "$RENDER_DEPLOY_HOOK"
         env:
-            RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
