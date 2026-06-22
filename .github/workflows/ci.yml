@@ -8,7 +8,7 @@ on:
 
 permissions:
   contents: read
-  security-events: write  # necesario para que CodeQL pueda subir resultados
+  security-events: write  # necesario para CodeQL
 
 jobs:
 
@@ -20,55 +20,40 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Descargar el código
       - name: Checkout código
         uses: actions/checkout@v4
 
-      # 2. Configurar Python
       - name: Configurar Python 3.14
         uses: actions/setup-python@v5
         with:
           python-version: '3.14'
           cache: 'pip'
 
-      # 3. Instalar dependencias
       - name: Instalar dependencias
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install bandit pip-audit
+          pip install bandit pip-audit pytest pytest-django pytest-cov
 
-      # 4. Ejecutar tests de Django
-      - name: Ejecutar tests
+      - name: Ejecutar tests con cobertura
         run: |
           python manage.py test
 
-      # 5. Análisis SAST con Bandit — más preciso que antes
-      #    -ll  → solo Medium y High (antes reportaba todo el ruido Low)
-      #    -ii  → solo Confidence Medium y High
-      #    -x   → excluir venv, tests y migraciones
       - name: 🔒 Análisis SAST — Bandit
         run: |
           bandit -r . -ll -ii \
-            -x ./venv,./.venv,./tests,./*/migrations
+            -x ./venv,./.venv,./tests,./*/migrations,./vulnerable_app
 
-      # 6. Auditoría de dependencias — NUEVO
-      #    Verifica que requirements.txt no tenga CVEs conocidos
       - name: 📦 Auditoría de dependencias — pip-audit
         run: |
           pip-audit -r requirements.txt
 
   # ──────────────────────────────────────────────────
-  # JOB 2: CodeQL — análisis semántico profundo
-  # NUEVO — complementa a Bandit con análisis de flujo
-  # de datos entre archivos (taint analysis real)
+  # JOB 2: CodeQL
   # ──────────────────────────────────────────────────
   codeql:
     name: 🔎 CodeQL — Análisis Semántico
     runs-on: ubuntu-latest
-    # Corre en paralelo con el job test (no espera que termine)
-    # Si quieres que corra solo si los tests pasan, agrega:
-    # needs: test
 
     steps:
       - name: Checkout código
@@ -78,7 +63,6 @@ jobs:
         uses: github/codeql-action/init@v4
         with:
           languages: python
-          # Ruleset de seguridad extendido (más reglas que el default)
           queries: security-extended
 
       - name: Autodetectar build
@@ -88,17 +72,92 @@ jobs:
         uses: github/codeql-action/analyze@v4
         with:
           category: "/language:python"
-          # Los resultados aparecen en:
-          # Security → Code scanning alerts del repo
 
   # ──────────────────────────────────────────────────
-  # JOB 3: Deploy — solo si test Y codeql pasan
+  # JOB 3: DAST — OWASP ZAP Baseline Scan
+  # Requiere que test y codeql pasen primero.
+  # Levanta la app Django en background y la escanea.
+  # ──────────────────────────────────────────────────
+  dast:
+    name: 🎯 DAST — OWASP ZAP
+    needs: [test, codeql]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Configurar Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          cache: 'pip'
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Configurar Django para staging local
+        run: |
+          # Permitir localhost en ALLOWED_HOSTS para el escaneo
+          echo "DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1" >> $GITHUB_ENV
+          echo "DJANGO_DEBUG=True" >> $GITHUB_ENV
+
+      - name: Inicializar base de datos y crear usuario de prueba
+        run: |
+          python manage.py migrate --run-syncdb
+          python manage.py shell -c "
+          from django.contrib.auth.models import User
+          if not User.objects.filter(username='admin').exists():
+              User.objects.create_superuser('admin', 'admin@lab.local', 'admin123')
+              User.objects.create_user('student', 'student@lab.local', 'student123')
+              print('Usuarios de prueba creados')
+          "
+
+      - name: 🚀 Iniciar servidor Django (staging efímero)
+        run: |
+          python manage.py runserver 0.0.0.0:8000 &
+          echo "SERVER_PID=$!" >> $GITHUB_ENV
+          # Esperar que la app levante
+          for i in {1..15}; do
+            curl -sf http://localhost:8000/ > /dev/null 2>&1 && break
+            echo "Esperando servidor... ($i/15)"
+            sleep 2
+          done
+
+      - name: Verificar que la app responde
+        run: |
+          curl -f http://localhost:8000/ || (echo "❌ La app no responde" && exit 1)
+          echo "✅ App disponible en localhost:8000"
+
+      - name: 🔍 ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.14.0
+        with:
+          target: 'http://localhost:8000'
+          rules_file_name: '.zap/rules.tsv'
+          fail_action: true
+          artifact_name: 'zap-baseline-report'
+          # El reporte HTML se genera automáticamente como report_html.html
+
+      - name: 📊 Subir reporte ZAP como Artifact
+        uses: actions/upload-artifact@v4
+        if: always()  # subir incluso si el scan falla — necesitamos ver los hallazgos
+        with:
+          name: zap-baseline-report
+          path: |
+            report_html.html
+            report_json.json
+          retention-days: 30
+
+  # ──────────────────────────────────────────────────
+  # JOB 4: Deploy — solo si test, codeql Y dast pasan
   # ──────────────────────────────────────────────────
   deploy:
     name: 🚀 Deploy a Render
-    needs: [test, codeql]   # antes solo dependía de test
+    needs: [test, codeql, dast]
     runs-on: ubuntu-latest
-    # Solo deployar desde main, no desde PRs
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     steps:
