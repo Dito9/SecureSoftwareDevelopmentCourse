@@ -147,7 +147,7 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()  # subir incluso si el scan falla — necesitamos ver los hallazgos
         with:
-          name: zap-baseline-report
+          name: zap-baseline-report-${{ github.job }}-${{ github.run_id }}
           path: |
             report_html.html
             report_json.json
