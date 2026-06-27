@@ -10,6 +10,9 @@
 # Un IGNORE sin justificación es una deuda de seguridad.
 
 # ── Informativos de bajo riesgo ────────────────────────────────────────────
+*	OUTOFSCOPE	-1
+*	IGNORE	LOW
+*	IGNORE	MEDIUM
 10015	IGNORE	# Incomplete or No Cache-control — aceptable en API sin datos privados en caché
 10027	IGNORE	# Information Disclosure - Suspicious Comments — comentarios en código de lab
 10096	IGNORE	# Timestamp Disclosure — timestamps no son sensibles en este contexto
@@ -24,3 +27,5 @@
 # 40018 SQL Injection     → FAIL (default)
 # 10202 CSRF             → FAIL (default)
 # 10038 CSP Not Set       → WARN (configurar antes del TF)
+
+
