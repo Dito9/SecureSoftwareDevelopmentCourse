@@ -137,8 +137,9 @@ jobs:
         with:
           target: 'http://localhost:8000'
           rules_file_name: '.zap/rules.tsv'
+          allow_issue_writing: false
           fail_action: true
-          fail_threshold: 'High'
+          cmd_options: '-z "-config pipeline.failBySeverity=High"'
           artifact_name: 'zap-baseline-report'
           # El reporte HTML se genera automáticamente como report_html.html
 
