@@ -140,18 +140,8 @@ jobs:
           allow_issue_writing: false
           fail_action: true
           cmd_options: '-z "-config pipeline.failBySeverity=High"'
-          artifact_name: 'zap-baseline-report'
+          artifact_name: 'zap-baseline-report-${{ github.job }}-${{ github.run_id }}'
           # El reporte HTML se genera automáticamente como report_html.html
-
-      - name: 📊 Subir reporte ZAP como Artifact
-        uses: actions/upload-artifact@v4
-        if: always()  # subir incluso si el scan falla — necesitamos ver los hallazgos
-        with:
-          name: zap-baseline-report-${{ github.job }}-${{ github.run_id }}
-          path: |
-            report_html.html
-            report_json.json
-          retention-days: 30
 
   # ──────────────────────────────────────────────────
   # JOB 4: Deploy — solo si test, codeql Y dast pasan
