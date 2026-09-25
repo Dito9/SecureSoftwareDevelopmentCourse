@@ -124,7 +124,7 @@ def user_by_id(request, user_id):
 def index(request):
     return JsonResponse({
         'app': 'SecureSoftwareDevelopmentCourse - Lab DAST - Dito',
-        'version': '2.1.1',
+        'version': '3.1.1',
         'endpoints': [
             '/api/users/',
             '/api/search/?q=<query>',
